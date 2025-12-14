@@ -454,10 +454,52 @@ Anschließend haben wir die Modellkapazität erhöht, indem wir die Sequenzläng
 Hier wurde dasselbe Modell wie zuvor verwendet, jedoch mit 1000 Datenpunkten trainiert. Durch die größere Datenmenge verbessert sich die Performance weiter: Die Vorhersagen werden glatter und insgesamt präziser, insbesondere bei den längeren Zeiträumen von 10 und 15 Minuten., aber mit 1000 Datenpunkten trainiert. Das Modell zeigt eine noch bessere Performance, da es mehr Daten zum Lernen hat. Die Vorhersagen sind glatter und genauer, insbesondere für die längeren Zeiträume von 10 und 15 Minuten.
 
 #### Baseline
-![](nasdaq_trading_bot/images/06_baseline_results.png)
-
 - Linear Regression versucht, eine lineare Beziehung zwischen deinen Features X und dem Target y zu finden
 
-- Dummy Regressor berechnet den Durchschnitt aller y-Werte im Training und gibt immer diesen Mittelwert als Vorhersage zurück.
 #### Baseline Vergleich aller Modelle 
 ![](nasdaq_trading_bot/images/06_model_comparison_final.png)
+
+## 7 - Deployment
+
+### 7.1 Deployment Skript (LSTM)
+[scripts/07_deployment/deploy_model.py](nasdaq_trading_bot/scripts/07_deployment/lstm_deploy.py)
+
+### 7.2 Deployment Skript (Feed Forward)
+[scripts/07_deployment/deploy_model.py](nasdaq_trading_bot/scripts/07_deployment/feed_forward_deploy.py)
+
+## 8 - Backtesting
+### Backtesting Skript (LSTM)
+[scripts/08_backtesting/backtest.py](nasdaq_trading_bot/scripts/08_backtesting/lstm_backtest.py)
+### Backtesting Plot (LSTM)
+![](nasdaq_trading_bot/images/08_lstm_backtest_plot.png)
+### Backtesting Skript (LSTM - Trade)
+[scripts/08_backtesting/backtest_trade.py](nasdaq_trading_bot/scripts/08_backtesting/lstm_backtest_trade.py)
+### Backtesting Plot (LSTM - Trade)
+![](nasdaq_trading_bot/images/08_lstm_trade_backtest.png)
+
+![](nasdaq_trading_bot/images/08_lstm_trade_backtest_result.png)
+- Entry Points: 
+  - Long-only Strategie 
+  - Entry-Entscheidung wird am Ende der aktuellen Minute getroffen. 
+  - Ausführung erfolgt immer am Open der nächsten Minute (Open[i+1]). 
+  - Entry-Bedingung:
+    - Kombiniertes Signal aus Modellvorhersagen (pred_3m und pred_5m) überschreitet einen definierten Threshold. 
+    - Zusätzlich muss die 3-Minuten-Prognose positiv sein. 
+    - Positionsgröße basiert auf einem festen Cash-Betrag pro Trade.
+- Exit Points 
+  - Eine offene Position wird am Open der nächsten Minute geschlossen, wenn eine der folgenden Bedingungen erfüllt ist:
+    - Stop-Loss / Take-Profit 
+      - Stop-Loss: −0.4 % 
+      - Take-Profit: +0.7 %
+      
+      (Prüfung erfolgt auf Basis des Open-Preises der nächsten Minute)
+    - Max Hold: Position wird automatisch geschlossen, wenn die maximale Haltedauer erreicht ist. 
+    - SignalFlip / 3mFlip: nach einer Mindesthaltezeit wird die Position geschlossen, wenn das kombinierte Signal negativ wird (SignalFlip), oder die 3-Minuten-Prognose negativ wird (3mFlip).
+- Overall Performance: 
+  - Total Trades: 4 
+  - Win Rate: 25% (1 Gewinner, 3 Verlierer)
+  - Total PnL: −35.70 
+  - Final Equity: 99,964.30 (Startkapital: 100,000)
+### Backtesting Skript (Feed Forward)
+[scripts/08_backtesting/backtest.py](nasdaq_trading_bot/scripts/08_backtesting/feed_forward_backtest.py)
+

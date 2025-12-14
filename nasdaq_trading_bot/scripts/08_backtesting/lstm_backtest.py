@@ -280,6 +280,11 @@ def run_backtest(days: int, sample_prints: int, save_csv: bool) -> None:
     scaler_y = joblib.load(SCALER_Y_PATH)
     scaler_X = joblib.load(SCALER_X_PATH)
 
+    print("\n[DEBUG] scaler_y diagnostics")
+    print("  mean_ :", scaler_y.mean_)
+    print("  scale_:", scaler_y.scale_)
+    print("  var_  :", getattr(scaler_y, "var_", "n/a"))
+
     feat_list = load_feature_list()
     print(f"[CONFIG] Features: {len(feat_list)} (Expect {INPUT_SIZE})")
     
@@ -295,24 +300,36 @@ def run_backtest(days: int, sample_prints: int, save_csv: bool) -> None:
     # 4. Add News (Robust Merge)
     news_provider = NewsFeatureProvider()
     df_feat = add_news_features(df_feat, news_provider)
-    
-    # 5. Build X
+    print("\n[DEBUG] News feature stats")
+    print(
+        df_feat[[
+            "last_news_sentiment",
+            "news_age_minutes",
+            "effective_sentiment_t"
+        ]].describe()
+)
+
+    # 5. Close Prices for Ground Truth (robust align)
+    close_prices = df_raw["Close"].reindex(df_feat.index).astype(float)
+
+    mask = close_prices.notna()
+    df_feat = df_feat.loc[mask]
+    close_prices = close_prices.loc[mask]
+
+    # 6. Build X (AFTER mask so alignment is guaranteed)
     X_raw = build_X(df_feat, feat_list)
-    print(f"[DATA] X_raw shape: {X_raw.shape}")
-    
-    # 6. Scale X
-    X = scaler_X.transform(X_raw)
+    print(f"[DATA] X_raw shape (post-align): {X_raw.shape}")
+
+    # 7. Scale X (use DataFrame to preserve feature order/names)
+    X_df = pd.DataFrame(X_raw, columns=feat_list)
+    X = scaler_X.transform(X_df)
     print(f"[DATA] X scaled mean: {X.mean():.4f}, std: {X.std():.4f}")
 
-    # 7. Close Prices for Ground Truth
-    close_prices = df_raw.loc[df_feat.index, "Close"].astype(float)
-
-    # 8. Loop & Predict
+    # Stop -15 to allow true_return calculation (15m horizon)
     results = []
-    # Stop -15 to allow true_return calculation
     limit = len(df_feat) - 15
-    
     print(f"[BACKTEST] Running inference on {limit - SEQ_LEN} bars...")
+
     
     with torch.no_grad():
         for i in range(SEQ_LEN, limit):
@@ -322,19 +339,22 @@ def run_backtest(days: int, sample_prints: int, save_csv: bool) -> None:
             
             out_scaled = model(x_batch).cpu().numpy()[0] # shape (5,)
             out_inv = scaler_y.inverse_transform([out_scaled])[0] # shape (5,)
-            
+            out_inv = out_inv / 100.0  # falls y im Training in % war
+
+            anchor_i = i - 1  # letzte Bar, die im Input enthalten ist (Forecast-Zeitpunkt)
+
             row = {
-                "timestamp": df_feat.index[i],
+                "timestamp": df_feat.index[anchor_i],
                 "pred_1m": out_inv[0],
                 "pred_3m": out_inv[1],
                 "pred_5m": out_inv[2],
                 "pred_10m": out_inv[3],
                 "pred_15m": out_inv[4],
-                "true_1m": true_return(close_prices, i, 1),
-                "true_3m": true_return(close_prices, i, 3),
-                "true_5m": true_return(close_prices, i, 5),
-                "true_10m": true_return(close_prices, i, 10),
-                "true_15m": true_return(close_prices, i, 15),
+                "true_1m": true_return(close_prices, anchor_i, 1),
+                "true_3m": true_return(close_prices, anchor_i, 3),
+                "true_5m": true_return(close_prices, anchor_i, 5),
+                "true_10m": true_return(close_prices, anchor_i, 10),
+                "true_15m": true_return(close_prices, anchor_i, 15),
             }
             results.append(row)
 
@@ -343,7 +363,18 @@ def run_backtest(days: int, sample_prints: int, save_csv: bool) -> None:
 
     df_res = pd.DataFrame(results).dropna()
     print(f"[BACKTEST] Usable results: {len(df_res)}")
-    
+    print("\n[DEBUG] Prediction vs Truth distribution (5m)")
+
+    for name in ["pred_5m", "true_5m"]:
+        x = df_res[name].values
+        print(
+            f"{name}: "
+            f"mean={x.mean():.6f}, "
+            f"std={x.std():.6f}, "
+        f"p99_abs={np.percentile(np.abs(x), 99):.6f}, "
+        f"max_abs={np.max(np.abs(x)):.6f}"
+    )
+
     # 9. Metrics
     print("\nMETRICS (Decimals converted to %):")
     for h in ["1m", "3m", "5m"]:
