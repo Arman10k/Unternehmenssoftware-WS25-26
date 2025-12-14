@@ -1,8 +1,8 @@
 """
-Improved LSTM Deployment Script for QQQ with Real-Time News + Replay Backtest
-============================================================================
+Feed Forward Deployment Script for QQQ with Real-Time News + Replay Backtest
+=============================================================================
 - Live: uses last COMPLETED minute bar time for news + prediction (no leakage).
-- Live: uses last COMPLETED minute bar time for news + prediction (no leakage).
+- Adapted from lstm_deploy.py for Feed Forward Model.
 """
 
 from __future__ import annotations
@@ -27,8 +27,6 @@ import yfinance as yf
 import torch
 from torch import nn
 
-from news_features import NewsFeatureProvider
-
 # -----------------------------
 # Paths / Imports
 # -----------------------------
@@ -46,8 +44,19 @@ else:
 
 FeatureBuilder = getattr(features_module, "FeatureBuilder")
 
+# News Feature Provider
+NEWS_FEATURES_PATH = os.path.join(PROJECT_ROOT, "scripts", "07_deployment", "news_features.py")
+spec_news = importlib.util.spec_from_file_location("news_features_module", NEWS_FEATURES_PATH)
+news_features_module = importlib.util.module_from_spec(spec_news) if spec_news else None
+if spec_news and spec_news.loader:
+    spec_news.loader.exec_module(news_features_module)
+    NewsFeatureProvider = getattr(news_features_module, "NewsFeatureProvider")
+else:
+    raise RuntimeError(f"Could not load news_features.py from {NEWS_FEATURES_PATH}")
+
+
 CONF_DIR = os.path.join(PROJECT_ROOT, "conf")
-MODELS_DIR = os.path.join(PROJECT_ROOT, "models", "lstm")
+MODELS_DIR_FF = os.path.join(PROJECT_ROOT, "models", "feed_forward")
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 SCALER_X_PATH = os.path.join(DATA_DIR, "scaler_X.joblib")
 
@@ -76,13 +85,17 @@ TAKE_PROFIT_PCT = 0.007
 MIN_HOLD_MINUTES = 8
 MAX_HOLD_MINUTES = 15
 
-# LSTM params (must match training)
-SEQUENCE_LENGTH = 50
+# Feed Forward params (must match training)
 INPUT_SIZE = 14  # MUST match training (14 features)
-HIDDEN_SIZE = 384
-NUM_LAYERS = 2
 OUTPUT_SIZE = 5
 DROPOUT = 0.2
+
+# Hidden layers from training script
+HIDDEN1 = 1024
+HIDDEN2 = 1024
+HIDDEN3 = 512
+HIDDEN4 = 512
+HIDDEN5 = 256
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 EASTERN = pytz.timezone("US/Eastern")
@@ -92,52 +105,40 @@ ALPACA_KEY_ID = os.getenv("ALPACA_KEY_ID", keys["KEYS"].get("APCA-API-KEY-ID-Pap
 ALPACA_SECRET = os.getenv("ALPACA_SECRET", keys["KEYS"].get("APCA-API-SECRET-KEY-Paper"))
 ALPACA_BASE = os.getenv("ALPACA_BASE", "https://paper-api.alpaca.markets")
 
-# Feature list (ordered!) - must match the model's training input schema
-FEATURE_LIST_PATH = os.path.join(MODELS_DIR, "features_clean.txt")
+# Feature list (ordered!) - using the same feature list as LSTM (assumed compatible)
+MODEL_DIR_LSTM = os.path.join(PROJECT_ROOT, "models", "lstm")
+FEATURE_LIST_PATH = os.path.join(MODEL_DIR_LSTM, "features_clean.txt")
 
 # cooldown tracking (in-memory; good enough for prototyping)
 last_trade_time: Dict[str, datetime] = {}
 
 
-
 # -----------------------------
 # Model
 # -----------------------------
-class LSTMModel(nn.Module):
-    def __init__(
-        self,
-        input_size: int,
-        hidden_size: int,
-        num_layers: int,
-        output_size: int,
-        bidirectional: bool = False,
-        dropout: float = 0.2,
-    ):
+class MLP(nn.Module):
+    def __init__(self, in_dim, h1, h2, h3, h4, h5, out_dim, dropout_p):
         super().__init__()
-        self.bidirectional = bidirectional
-        self.num_directions = 2 if bidirectional else 1
-
-        self.lstm = nn.LSTM(
-            input_size=input_size,
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            batch_first=True,
-            dropout=dropout if num_layers > 1 else 0.0,
-            bidirectional=bidirectional,
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, h1),
+            nn.LeakyReLU(),
+            nn.Dropout(dropout_p),
+            nn.Linear(h1, h2),
+            nn.LeakyReLU(),
+            nn.Dropout(dropout_p),
+            nn.Linear(h2, h3),
+            nn.LeakyReLU(),
+            nn.Dropout(dropout_p),
+            nn.Linear(h3, h4),
+            nn.LeakyReLU(),
+            nn.Dropout(dropout_p),
+            nn.Linear(h4, h5),
+            nn.LeakyReLU(),
+            nn.Dropout(dropout_p),
+            nn.Linear(h5, out_dim)
         )
-        self.fc = nn.Linear(hidden_size * self.num_directions, output_size)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out, (h_n, c_n) = self.lstm(x)
-        last_layer_h = h_n[-self.num_directions :, :, :]  # (dir, batch, hidden)
-        last_layer_h = last_layer_h.transpose(0, 1).reshape(x.size(0), -1)  # (batch, hidden*dir)
-        return self.fc(last_layer_h)
-
-
-def create_last_sequence(X: np.ndarray, seq_len: int) -> np.ndarray:
-    if len(X) < seq_len:
-        return np.array([])
-    return np.array([X[-seq_len:]])
+    def forward(self, x):
+        return self.net(x)
 
 
 # -----------------------------
@@ -310,7 +311,6 @@ def download_qqq_data(days: int = 5) -> pd.DataFrame:
     return df
 
 
-
 # -----------------------------
 # Features (base, no news columns added here)
 # -----------------------------
@@ -364,8 +364,8 @@ def build_features_no_news(df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Times
 # -----------------------------
 # Model loading
 # -----------------------------
-def load_lstm_model() -> Tuple[LSTMModel, object, object]:
-    model_path = os.path.join(MODELS_DIR, "best_lstm_model.pth")
+def load_ff_model() -> Tuple[MLP, object, object]:
+    model_path = os.path.join(MODELS_DIR_FF, "best_model_feed_forward.pt")
     scaler_y_path = os.path.join(DATA_DIR, "scaler_y.joblib")
     
     if not os.path.exists(model_path):
@@ -378,13 +378,15 @@ def load_lstm_model() -> Tuple[LSTMModel, object, object]:
     scaler_y = joblib.load(scaler_y_path)
     scaler_X = joblib.load(SCALER_X_PATH)
 
-    model = LSTMModel(
-        input_size=INPUT_SIZE,
-        hidden_size=HIDDEN_SIZE,
-        num_layers=NUM_LAYERS,
-        output_size=OUTPUT_SIZE,
-        bidirectional=False,
-        dropout=DROPOUT,
+    model = MLP(
+        in_dim=INPUT_SIZE,
+        h1=HIDDEN1,
+        h2=HIDDEN2,
+        h3=HIDDEN3,
+        h4=HIDDEN4,
+        h5=HIDDEN5,
+        out_dim=OUTPUT_SIZE,
+        dropout_p=DROPOUT
     ).to(DEVICE)
 
     state_dict = torch.load(model_path, map_location=DEVICE)
@@ -447,14 +449,12 @@ def should_exit(symbol: str, signal: float, r3: float) -> Tuple[bool, str]:
     return False, "Hold"
 
 
-
-
 # -----------------------------
 # Run once (live)
 # -----------------------------
 def run_once(dry_run: bool = False, test_data: bool = False, use_news: bool = True):
     print("=" * 70)
-    print("LSTM QQQ Paper Bot (with Alpha Vantage News)" if use_news else "LSTM QQQ Paper Bot (News disabled)")
+    print("FF QQQ Paper Bot (with Alpha Vantage News)" if use_news else "FF QQQ Paper Bot (News disabled)")
     print("=" * 70)
 
     acct = get_account_info()
@@ -462,7 +462,7 @@ def run_once(dry_run: bool = False, test_data: bool = False, use_news: bool = Tr
     cash = float(acct.get("cash", 0))
     print(f"[ACCOUNT] Equity=${equity:,.2f} Cash=${cash:,.2f}")
 
-    model, scaler_y, scaler_X = load_lstm_model()
+    model, scaler_y, scaler_X = load_ff_model()
     feat_list = load_feature_list(FEATURE_LIST_PATH)
 
     print(f"[MODEL] Input={INPUT_SIZE} Features={len(feat_list)}")
@@ -496,7 +496,8 @@ def run_once(dry_run: bool = False, test_data: bool = False, use_news: bool = Tr
         print("[WARN] No RTH bars.")
         return
 
-    if len(df_rth) < SEQUENCE_LENGTH + 2:
+    # Need at least 1 bar for FF, but for safety lets say 50
+    if len(df_rth) < 50:
         print("[ERROR] Not enough bars.")
         return
 
@@ -504,8 +505,6 @@ def run_once(dry_run: bool = False, test_data: bool = False, use_news: bool = Tr
     bar_time = df_rth.index[-2] # -1 is incomplete current bar, -2 is last full
     val = df_rth["Close"].iloc[-2]
     last_completed_price = float(val.item() if hasattr(val, "item") else val)
-
-
 
     df_feat, last_ts = build_features_no_news(df_rth)
     
@@ -528,21 +527,7 @@ def run_once(dry_run: bool = False, test_data: bool = False, use_news: bool = Tr
             print(f"[NEWS DATA FAIL] {e}")
 
     # Build Feature Vector
-    # We need the LAST sequence [t-(SEQ-1) ... t]
-    # But df_feat has all history.
-    
-    # First: add news cols to scalar df
-    # NOTE: df_feat is full history. For LIVE, we only strictly need the last 50 rows.
-    # But we need to handle "past" news for the last 50 rows?
-    # Actually, the model input assumes "effective sentiment" is known at each step.
-    # For simplicity in LIVE run_once (low latency):
-    # We assume historical effective sentiment was "close enough" to current or we re-fetch.
-    # But re-fetching history for 50 bars from API per minute is expensive/impossible.
-    # SOLUTION: For the live 'sequence', we assume the news state hasn't wildly changed 
-    # OR we just fill the 'current' news state across the sequence if we lack history? 
-    # Better: We only fetch current.
-    # We'll fill the whole sequence with the CURRENT news features (approx).
-    # This is a slight inaccuracy but acceptable for live deployment vs complex cached state.
+    # FF Model: 1 timestep (the last one)
     
     # 3. Add to DF
     df_feat["last_news_sentiment"] = news_val["last_news_sentiment"]
@@ -551,27 +536,22 @@ def run_once(dry_run: bool = False, test_data: bool = False, use_news: bool = Tr
     
     # 4. Select features in order
     X_list = []
+    # We only need the very last row for current prediction
+    last_row = df_feat.iloc[-1]
+    
     for feat in feat_list:
-        if feat in df_feat.columns:
-            X_list.append(df_feat[feat].values.astype(np.float32))
+        if feat in last_row.index:
+            X_list.append(float(last_row[feat]))
         else:
             raise ValueError(f"Feature '{feat}' missing from live DF!")
             
-    X_raw = np.column_stack(X_list).astype(np.float32)
+    X_raw = np.array([X_list], dtype=np.float32) # Shape (1, 14)
     
     # 5. Scale
-    # Reconstruct DF to suppress UserWarning for feature names
     X_df_raw = pd.DataFrame(X_raw, columns=feat_list)
-    X = scaler_X.transform(X_df_raw)
-
+    X = scaler_X.transform(X_df_raw) # Shape (1, 14)
     
-    # 6. Seq
-    X_seq = create_last_sequence(X, SEQUENCE_LENGTH)
-    if X_seq.size == 0:
-        print("[ERROR] not enough data for seq")
-        return
-        
-    X_tensor = torch.from_numpy(X_seq).float().to(DEVICE) # (1, 50, 14)
+    X_tensor = torch.from_numpy(X).float().to(DEVICE) # (1, 14)
 
     with torch.no_grad():
         pred_scaled = model(X_tensor).cpu().numpy()[0]

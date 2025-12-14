@@ -1,22 +1,14 @@
 """
-LSTM Backtest v5 with AlphaVantage News for QQQ
-================================================
+Feed Forward Backtest v5 with AlphaVantage News for QQQ
+========================================================
 
 Goal:
-- Validate model predictions vs true future returns (1/3/5/10/15m)
-- NEWS ENABLED: fetches real news from AlphaVantage and calculates sentiment
-- Uses exact 14 features from training (features_clean.txt)
-
-Outputs:
-- scaler_y shape diagnostics
-- news feature statistics
-- distribution stats for TRUE and PRED (mean/std/p99/maxabs)
-- metrics: MAE/RMSE/Directional Accuracy
-- optional CSV export
+- Validate Feed Forward model predictions vs true future returns (1/3/5/10/15m)
+- NEWS ENABLED: fetches real news from AlphaVantage
+- Uses exact features from training
 
 Usage:
-  python lstm_backtest.py --days 7 --sample-prints 3
-  python lstm_backtest.py --days 10 --save-csv
+  python ff_backtest.py --days 7 --sample-prints 3
 """
 
 from __future__ import annotations
@@ -47,13 +39,15 @@ PROJECT_ROOT = os.path.abspath(os.path.join(THIS_DIR, "..", ".."))
 sys.path.insert(0, PROJECT_ROOT)
 
 FEATURES_PY_PATH = os.path.join(PROJECT_ROOT, "scripts", "03_pre_split_prep", "features.py")
-MODELS_DIR = os.path.join(PROJECT_ROOT, "models", "lstm")
+MODELS_DIR = os.path.join(PROJECT_ROOT, "models", "feed_forward") # FF path
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "images")
 
-# MUST match training
-FEATURE_LIST_PATH = os.path.join(MODELS_DIR, "features_clean.txt")
-MODEL_PATH = os.path.join(MODELS_DIR, "best_lstm_model.pth")
+# Use LSTM feature list as it is shared/same schema
+MODEL_DIR_LSTM = os.path.join(PROJECT_ROOT, "models", "lstm")
+FEATURE_LIST_PATH = os.path.join(MODEL_DIR_LSTM, "features_clean.txt")
+
+MODEL_PATH = os.path.join(MODELS_DIR, "best_model_feed_forward.pt")
 SCALER_Y_PATH = os.path.join(DATA_DIR, "scaler_y.joblib")
 SCALER_X_PATH = os.path.join(DATA_DIR, "scaler_X.joblib")
 
@@ -83,12 +77,16 @@ FeatureBuilder = features_module.FeatureBuilder
 # Constants (MUST MATCH TRAINING)
 # ======================================================
 TICKER = "QQQ"
-SEQ_LEN = 50
-INPUT_SIZE = 14  # 11 Technical + 3 News
-HIDDEN_SIZE = 384
-NUM_LAYERS = 2
+INPUT_SIZE = 14
 OUTPUT_SIZE = 5
 DROPOUT = 0.2
+
+# Hidden layers from training script
+HIDDEN1 = 1024
+HIDDEN2 = 1024
+HIDDEN3 = 512
+HIDDEN4 = 512
+HIDDEN5 = 256
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -101,21 +99,29 @@ NEWS_FEATURES = [
 # ======================================================
 # Model
 # ======================================================
-class LSTMModel(nn.Module):
-    def __init__(self):
+class MLP(nn.Module):
+    def __init__(self, in_dim, h1, h2, h3, h4, h5, out_dim, dropout_p):
         super().__init__()
-        self.lstm = nn.LSTM(
-            input_size=INPUT_SIZE,
-            hidden_size=HIDDEN_SIZE,
-            num_layers=NUM_LAYERS,
-            batch_first=True,
-            dropout=DROPOUT if NUM_LAYERS > 1 else 0.0,
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, h1),
+            nn.LeakyReLU(),
+            nn.Dropout(dropout_p),
+            nn.Linear(h1, h2),
+            nn.LeakyReLU(),
+            nn.Dropout(dropout_p),
+            nn.Linear(h2, h3),
+            nn.LeakyReLU(),
+            nn.Dropout(dropout_p),
+            nn.Linear(h3, h4),
+            nn.LeakyReLU(),
+            nn.Dropout(dropout_p),
+            nn.Linear(h4, h5),
+            nn.LeakyReLU(),
+            nn.Dropout(dropout_p),
+            nn.Linear(h5, out_dim)
         )
-        self.fc = nn.Linear(HIDDEN_SIZE, OUTPUT_SIZE)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        _, (h_n, _) = self.lstm(x)
-        return self.fc(h_n[-1])
+    def forward(self, x):
+        return self.net(x)
 
 # ======================================================
 # Helpers
@@ -175,7 +181,6 @@ def build_features(df_raw: pd.DataFrame) -> pd.DataFrame:
     
     if "avg_volume_per_trade" not in df_feat.columns:
         df_feat["avg_volume_per_trade"] = df_feat["volume"] / 100.0
-        # print("[INFO] avg_volume_per_trade approximated as volume/100")
     
     df_feat = df_feat.replace([np.inf, -np.inf], np.nan).dropna()
 
@@ -186,7 +191,6 @@ def build_features(df_raw: pd.DataFrame) -> pd.DataFrame:
 
 def add_news_features(df_feat: pd.DataFrame, news_provider: NewsFeatureProvider) -> pd.DataFrame:
     print("[NEWS] Fetching news data once for backtest period...")
-    # Fetch once
     try:
         df_news = news_provider.fetch_news_df_once(tickers=["QQQ"])
     except Exception as e:
@@ -204,13 +208,10 @@ def add_news_features(df_feat: pd.DataFrame, news_provider: NewsFeatureProvider)
     
     decay_lambda = news_provider.decay_lambda
     
-    # Using pandas asof merge is much faster/cleaner
     df_news_indexed = df_news.set_index("timestamp").sort_index()
-    # Ensure TZ awareness matches
     if df_feat.index.tz is None:
         df_feat.index = df_feat.index.tz_localize("UTC")
     
-    # Include timestamp as a column in df_news_indexed
     df_news_indexed["news_ts"] = df_news_indexed.index
     
     merged_full = pd.merge_asof(
@@ -221,18 +222,14 @@ def add_news_features(df_feat: pd.DataFrame, news_provider: NewsFeatureProvider)
         direction='backward'
     )
     
-    # Fill NaNs (no news yet)
     merged_full["sentiment_score"] = merged_full["sentiment_score"].fillna(0.0)
     
-    # Calculate Age
     bar_times = merged_full.index
     news_times = merged_full["news_ts"]
     
-    # Age in minutes
     age_series = (bar_times - news_times).dt.total_seconds() / 60.0
     age_series = age_series.fillna(0.0)
     
-    # Effective sentiment
     eff_series = merged_full["sentiment_score"] * np.exp(-decay_lambda * age_series)
     
     df_feat["last_news_sentiment"] = merged_full["sentiment_score"]
@@ -250,7 +247,6 @@ def build_X(df_feat: pd.DataFrame, feat_list: List[str]) -> np.ndarray:
             cols.append(df_feat[f].values)
         else:
             print(f"[ERROR] Missing feature '{f}' in dataframe!")
-            print(f"Available: {list(df_feat.columns)[:20]}...")
             raise KeyError(f"Feature '{f}' missing")
 
     X = np.column_stack(cols).astype(np.float32)
@@ -259,7 +255,6 @@ def build_X(df_feat: pd.DataFrame, feat_list: List[str]) -> np.ndarray:
 def true_return(close: pd.Series, i: int, horizon: int) -> float | None:
     if i + horizon >= len(close):
         return None
-    # Returns in DECIMAL (0.01 = 1%)
     return float(close.iloc[i + horizon] / close.iloc[i] - 1.0)
 
 # ======================================================
@@ -267,23 +262,28 @@ def true_return(close: pd.Series, i: int, horizon: int) -> float | None:
 # ======================================================
 def run_backtest(days: int, sample_prints: int, save_csv: bool) -> None:
     print("=" * 70)
-    print(f"LSTM BACKTEST v5 (Optimized) | Ticker: {TICKER} | Days: {days}")
+    print(f"FF BACKTEST v5 (Optimized) | Ticker: {TICKER} | Days: {days}")
     print("=" * 70)
 
     # 1. Load Model & Scalers
     if not os.path.exists(MODEL_PATH):
         raise FileNotFoundError(f"Model not found: {MODEL_PATH}")
-    model = LSTMModel().to(DEVICE)
+    
+    model = MLP(
+        in_dim=INPUT_SIZE,
+        h1=HIDDEN1,
+        h2=HIDDEN2,
+        h3=HIDDEN3,
+        h4=HIDDEN4,
+        h5=HIDDEN5,
+        out_dim=OUTPUT_SIZE,
+        dropout_p=DROPOUT
+    ).to(DEVICE)
     model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
     model.eval()
 
     scaler_y = joblib.load(SCALER_Y_PATH)
     scaler_X = joblib.load(SCALER_X_PATH)
-
-    print("\n[DEBUG] scaler_y diagnostics")
-    print("  mean_ :", scaler_y.mean_)
-    print("  scale_:", scaler_y.scale_)
-    print("  var_  :", getattr(scaler_y, "var_", "n/a"))
 
     feat_list = load_feature_list()
     print(f"[CONFIG] Features: {len(feat_list)} (Expect {INPUT_SIZE})")
@@ -300,61 +300,53 @@ def run_backtest(days: int, sample_prints: int, save_csv: bool) -> None:
     # 4. Add News (Robust Merge)
     news_provider = NewsFeatureProvider()
     df_feat = add_news_features(df_feat, news_provider)
-    print("\n[DEBUG] News feature stats")
-    print(
-        df_feat[[
-            "last_news_sentiment",
-            "news_age_minutes",
-            "effective_sentiment_t"
-        ]].describe()
-)
 
-    # 5. Close Prices for Ground Truth (robust align)
+    # 5. Close Prices for Ground Truth
     close_prices = df_raw["Close"].reindex(df_feat.index).astype(float)
 
     mask = close_prices.notna()
     df_feat = df_feat.loc[mask]
     close_prices = close_prices.loc[mask]
 
-    # 6. Build X (AFTER mask so alignment is guaranteed)
+    # 6. Build X
     X_raw = build_X(df_feat, feat_list)
     print(f"[DATA] X_raw shape (post-align): {X_raw.shape}")
 
-    # 7. Scale X (use DataFrame to preserve feature order/names)
+    # 7. Scale X
     X_df = pd.DataFrame(X_raw, columns=feat_list)
     X = scaler_X.transform(X_df)
-    print(f"[DATA] X scaled mean: {X.mean():.4f}, std: {X.std():.4f}")
-
+    
     # Stop -15 to allow true_return calculation (15m horizon)
     results = []
     limit = len(df_feat) - 15
-    print(f"[BACKTEST] Running inference on {limit - SEQ_LEN} bars...")
-
     
+    # Start loop. FF doesn't strictly need seq_len=50 lookback, but we can start from 0.
+    # However, 'features.py' usually produces NaNs for first ~54 rows (EMA50 + Slopes). 
+    # 'dropna' already handled that. So X row 0 is valid.
+    print(f"[BACKTEST] Running inference on {limit} bars...")
+
     with torch.no_grad():
-        for i in range(SEQ_LEN, limit):
-            # Sequence: [i-50 : i]
-            x_seq = X[i - SEQ_LEN : i] # shape (50, 14)
-            x_batch = torch.from_numpy(x_seq).unsqueeze(0).to(DEVICE) # shape (1, 50, 14)
+        for i in range(0, limit):
+            # FF input: Single vector X[i]
+            x_vec = X[i] # shape (14,)
+            x_batch = torch.from_numpy(x_vec).unsqueeze(0).to(DEVICE) # shape (1, 14)
             
             out_scaled = model(x_batch).cpu().numpy()[0] # shape (5,)
             out_inv = scaler_y.inverse_transform([out_scaled])[0] # shape (5,)
             out_inv = out_inv / 100.0  # falls y im Training in % war
 
-            anchor_i = i - 1  # letzte Bar, die im Input enthalten ist (Forecast-Zeitpunkt)
-
             row = {
-                "timestamp": df_feat.index[anchor_i],
+                "timestamp": df_feat.index[i],
                 "pred_1m": out_inv[0],
                 "pred_3m": out_inv[1],
                 "pred_5m": out_inv[2],
                 "pred_10m": out_inv[3],
                 "pred_15m": out_inv[4],
-                "true_1m": true_return(close_prices, anchor_i, 1),
-                "true_3m": true_return(close_prices, anchor_i, 3),
-                "true_5m": true_return(close_prices, anchor_i, 5),
-                "true_10m": true_return(close_prices, anchor_i, 10),
-                "true_15m": true_return(close_prices, anchor_i, 15),
+                "true_1m": true_return(close_prices, i, 1),
+                "true_3m": true_return(close_prices, i, 3),
+                "true_5m": true_return(close_prices, i, 5),
+                "true_10m": true_return(close_prices, i, 10),
+                "true_15m": true_return(close_prices, i, 15),
             }
             results.append(row)
 
@@ -363,17 +355,6 @@ def run_backtest(days: int, sample_prints: int, save_csv: bool) -> None:
 
     df_res = pd.DataFrame(results).dropna()
     print(f"[BACKTEST] Usable results: {len(df_res)}")
-    print("\n[DEBUG] Prediction vs Truth distribution (5m)")
-
-    for name in ["pred_5m", "true_5m"]:
-        x = df_res[name].values
-        print(
-            f"{name}: "
-            f"mean={x.mean():.6f}, "
-            f"std={x.std():.6f}, "
-        f"p99_abs={np.percentile(np.abs(x), 99):.6f}, "
-        f"max_abs={np.max(np.abs(x)):.6f}"
-    )
 
     # 9. Metrics
     print("\nMETRICS (Decimals converted to %):")
@@ -387,7 +368,7 @@ def run_backtest(days: int, sample_prints: int, save_csv: bool) -> None:
 
     # 10. Save & Plot
     if save_csv:
-        path = os.path.join(RESULTS_DIR, "08_lstm_backtest_results.csv")
+        path = os.path.join(RESULTS_DIR, "08_ff_backtest_results.csv")
         df_res.to_csv(path, index=False)
         print(f"[SAVE] Results saved to {path}")
 
@@ -398,12 +379,11 @@ def run_backtest(days: int, sample_prints: int, save_csv: bool) -> None:
     plt.plot(subset["timestamp"], subset["pred_5m"], label="Pred 5m", alpha=0.8)
     plt.axhline(0, color="k", linestyle="--", alpha=0.3)
     plt.legend()
-    plt.title("LSTM Backtest: Predicted vs True Returns (5m Horizon) - Last 300 pts")
+    plt.title("FF Backtest: Predicted vs True Returns (5m Horizon) - Last 300 pts")
     
-    plot_path = os.path.join(RESULTS_DIR, "08_lstm_backtest_plot.png")
+    plot_path = os.path.join(RESULTS_DIR, "08_ff_backtest_plot.png")
     plt.savefig(plot_path)
     print(f"[PLOT] Saved to {plot_path}")
-    # plt.show()
 
 def main():
     parser = argparse.ArgumentParser()
