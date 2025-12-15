@@ -461,23 +461,13 @@ Hier wurde dasselbe Modell wie zuvor verwendet, jedoch mit 1000 Datenpunkten tra
 
 ## 7 - Deployment
 
-### 7.1 Deployment Skript (LSTM)
+### 7.1 Deployment Skript (Feed Forward)
+[scripts/07_deployment/deploy_model.py](nasdaq_trading_bot/scripts/07_deployment/ff_deploy.py)
+
+### 7.2 Deployment Skript (LSTM)
 [scripts/07_deployment/deploy_model.py](nasdaq_trading_bot/scripts/07_deployment/lstm_deploy.py)
 
-### 7.2 Deployment Skript (Feed Forward)
-[scripts/07_deployment/deploy_model.py](nasdaq_trading_bot/scripts/07_deployment/feed_forward_deploy.py)
-
 ## 8 - Backtesting
-### Backtesting Skript (LSTM)
-[scripts/08_backtesting/backtest.py](nasdaq_trading_bot/scripts/08_backtesting/lstm_backtest.py)
-### Backtesting Plot (LSTM)
-![](nasdaq_trading_bot/images/08_lstm_backtest_plot.png)
-### Backtesting Skript (LSTM - Trade)
-[scripts/08_backtesting/backtest_trade.py](nasdaq_trading_bot/scripts/08_backtesting/lstm_backtest_trade.py)
-### Backtesting Plot (LSTM - Trade)
-![](nasdaq_trading_bot/images/08_lstm_trade_backtest.png)
-
-![](nasdaq_trading_bot/images/08_lstm_trade_backtest_result.png)
 - Entry Points: 
   - Long-only Strategie 
   - Entry-Entscheidung wird am Ende der aktuellen Minute getroffen. 
@@ -495,11 +485,35 @@ Hier wurde dasselbe Modell wie zuvor verwendet, jedoch mit 1000 Datenpunkten tra
       (Prüfung erfolgt auf Basis des Open-Preises der nächsten Minute)
     - Max Hold: Position wird automatisch geschlossen, wenn die maximale Haltedauer erreicht ist. 
     - SignalFlip / 3mFlip: nach einer Mindesthaltezeit wird die Position geschlossen, wenn das kombinierte Signal negativ wird (SignalFlip), oder die 3-Minuten-Prognose negativ wird (3mFlip).
+### Backtesting Skript (Feed Forward)
+[scripts/08_backtesting/backtest.py](nasdaq_trading_bot/scripts/08_backtesting/ff_backtest.py)
+### Backtesting Plot (Feed Forward)
+![](nasdaq_trading_bot/images/08_ff_backtest_plot.png)
+### Backtesting Skript (Feed Forward - Trade)
+[scripts/08_backtesting/backtest_trade.py](nasdaq_trading_bot/scripts/08_backtesting/ff_backtest_trade.py)
+### Backtesting Plot (Feed Forward - Trade)
+![](nasdaq_trading_bot/images/08_ff_trade_backtest.png)
+
+![](nasdaq_trading_bot/images/08_ff_trade_backtest_result.png)
+- Overall Performance: 
+  - Total Trades: 58
+  - Win Rate: 50% (29 Gewinner, 29 Verlierer)
+  - Total PnL: 1.80 
+  - Final Equity: 100001.80 (Startkapital: 100,000)
+
+### Backtesting Skript (LSTM)
+[scripts/08_backtesting/backtest.py](nasdaq_trading_bot/scripts/08_backtesting/lstm_backtest.py)
+### Backtesting Plot (LSTM)
+![](nasdaq_trading_bot/images/08_lstm_backtest_plot.png)
+### Backtesting Skript (LSTM - Trade)
+[scripts/08_backtesting/backtest_trade.py](nasdaq_trading_bot/scripts/08_backtesting/lstm_backtest_trade.py)
+### Backtesting Plot (LSTM - Trade)
+![](nasdaq_trading_bot/images/08_lstm_trade_backtest.png)
+
+![](nasdaq_trading_bot/images/08_lstm_trade_backtest_result.png)
 - Overall Performance: 
   - Total Trades: 4 
   - Win Rate: 25% (1 Gewinner, 3 Verlierer)
   - Total PnL: −35.70 
   - Final Equity: 99,964.30 (Startkapital: 100,000)
-### Backtesting Skript (Feed Forward)
-[scripts/08_backtesting/backtest.py](nasdaq_trading_bot/scripts/08_backtesting/feed_forward_backtest.py)
 
