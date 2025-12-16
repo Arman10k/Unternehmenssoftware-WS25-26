@@ -516,4 +516,4 @@ Hier wurde dasselbe Modell wie zuvor verwendet, jedoch mit 1000 Datenpunkten tra
   - Win Rate: 25% (1 Gewinner, 3 Verlierer)
   - Total PnL: −35.70 
   - Final Equity: 99,964.30 (Startkapital: 100,000)
-
+<img width="1070" height="444" alt="image" src="https://github.com/user-attachments/assets/1bc133fe-05de-4c8f-9c27-f9571a912656" />
