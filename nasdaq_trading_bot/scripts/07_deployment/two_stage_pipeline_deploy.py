@@ -138,7 +138,7 @@ def download_qqq_data(days: int = 2) -> pd.DataFrame:
     return df
 
 
-def extract_event_features_from_window(pre_window: pd.DataFrame, news_sentiment: float = 0.0) -> Dict:
+def extract_event_features_from_window(pre_window: pd.DataFrame, news_sentiment: float = 0.0, event_time: Optional[datetime] = None) -> Dict:
     """Extract event features from pre-window"""
     features = {}
     
@@ -170,6 +170,22 @@ def extract_event_features_from_window(pre_window: pd.DataFrame, news_sentiment:
     
     features['pre_price_std'] = np.std(prices)
     
+    # Volatility features
+    if len(pre_window) >= 2:
+        # Realized volatility (std of log returns)
+        log_returns = np.log(prices[1:] / prices[:-1])
+        features['pre_realized_vol'] = np.std(log_returns)
+        
+        # High-Low span
+        if 'high' in pre_window.columns and 'low' in pre_window.columns:
+            hl_spans = pre_window['high'] - pre_window['low']
+            features['pre_hl_span_mean'] = np.mean(hl_spans)
+        else:
+            features['pre_hl_span_mean'] = 0.0
+    else:
+        features['pre_realized_vol'] = 0.0
+        features['pre_hl_span_mean'] = 0.0
+    
     # Volume
     if 'volume' in pre_window.columns:
         volumes = pre_window['volume'].values
@@ -189,7 +205,32 @@ def extract_event_features_from_window(pre_window: pd.DataFrame, news_sentiment:
     
     features['pre_trade_count_mean'] = features['pre_volume_mean'] / 100.0
     features['pre_avg_trade_size'] = 100.0
-    features['minutes_since_market_open'] = 60.0
+    
+    # Time features
+    if event_time is not None:
+        if event_time.tzinfo is None:
+            event_time = event_time.replace(tzinfo=timezone.utc)
+        else:
+            event_time = event_time.astimezone(timezone.utc)
+        
+        features['news_hour'] = event_time.hour
+        features['news_minute'] = event_time.minute
+        features['news_day_of_week'] = event_time.weekday()
+        
+        # Minutes since market open (9:30 ET = 14:30 UTC)
+        market_open_utc = event_time.replace(hour=14, minute=30, second=0, microsecond=0)
+        if event_time >= market_open_utc:
+            features['minutes_since_market_open'] = (event_time - market_open_utc).total_seconds() / 60.0
+        else:
+            features['minutes_since_market_open'] = 0.0
+    else:
+        # Fallback to current time
+        now = datetime.now(timezone.utc)
+        features['news_hour'] = now.hour
+        features['news_minute'] = now.minute
+        features['news_day_of_week'] = now.weekday()
+        features['minutes_since_market_open'] = 60.0
+    
     features['news_sentiment'] = news_sentiment
     features['pre_bars_count'] = len(pre_window)
     features['pre_coverage_pct'] = (len(pre_window) / PRE_WINDOW_MINUTES) * 100.0
@@ -255,7 +296,7 @@ def run_once(dry_run: bool = False):
     print(f"[ACCOUNT] Equity=${equity:,.2f}")
 
     stage1_model, stage2_model, scaler_X, config, feature_names = load_models()
-    stage1_threshold = config["stage1"]["threshold"]
+    stage1_threshold = config["stage1"]["threshold"] if config["stage1"] else 0.5
     stage2_threshold = config["stage2"]["threshold"] if config["stage2"] else 0.5
     
     print(f"[CONFIG] Stage1={stage1_threshold:.3f}, Stage2={stage2_threshold:.3f}")
@@ -282,7 +323,8 @@ def run_once(dry_run: bool = False):
     news_sentiment = get_news_sentiment()
     
     # Extract features
-    features_dict = extract_event_features_from_window(pre_window, news_sentiment)
+    event_time = datetime.now(timezone.utc)
+    features_dict = extract_event_features_from_window(pre_window, news_sentiment, event_time)
     
     if features_dict is None:
         print("[ERROR] Could not extract features")
