@@ -219,7 +219,12 @@ Hier ist die Zusammenfassung unserer Schritte und die Validierung der "Warum"-Fr
 Die Backtesting-Skripte befinden sich in `scripts/08_backtesting`.
 
 - `01_event_pipeline_backtest.py`: Testet die volle Pipeline (Stage 1 Filter + Stage 2 Direction). Das ist das wichtigste Skript.
+
+![08_two_stage_backtest.png](nasdaq_trading_bot/images/08_two_stage_backtest.png)
+
 - `02_event_regression_backtest.py`: Backtest für den Regressions-Ansatz (Schritt 5).
+
+![08_regression_backtest.png](nasdaq_trading_bot/images/08_regression_backtest.png)
 
 ## 6. Deployment
 - regression_pipeline_deploy.py
