@@ -1,0 +1,23 @@
+{
+  "q": 0.35,
+  "abs_threshold": 0.16672892104014617,
+  "stage1": {
+    "threshold": 0.65,
+    "precision": 0.4473684210526316,
+    "recall": 0.29310344827586204,
+    "f1": 0.3541666666666667,
+    "accuracy": 0.7633587786259542,
+    "pred_trades": 38
+  },
+  "stage2": {
+    "threshold": 0.5774781780591777,
+    "precision": 0.5,
+    "recall": 0.043478260869565216,
+    "f1": 0.08,
+    "accuracy": 0.39473684210526316,
+    "pred_up": 2,
+    "n_test": 38
+  },
+  "combined_precision": 0.2236842105263158,
+  "test_filtered": 38
+}
