@@ -1,0 +1,42 @@
+{
+  "split": "test",
+  "config": {
+    "q": 0.35,
+    "abs_threshold": 0.16672892104014617,
+    "stage1_threshold": 0.65,
+    "stage2_threshold": 0.5774781780591777,
+    "transaction_cost_bps": 2,
+    "filter_mode": "top_k",
+    "top_k_pct": 0.6,
+    "stage2_min_prob": 0.6,
+    "avg_move_estimate": 0.15,
+    "enable_short_trades": true,
+    "up_threshold": 0.55,
+    "down_threshold": 0.55
+  },
+  "events": {
+    "total": 262,
+    "stage1_filtered": 38,
+    "stage2_up_predicted": 2,
+    "long_trades_executed": 15,
+    "short_trades_executed": 6,
+    "total_trades_executed": 21
+  },
+  "performance": {
+    "mean_gross_return_pct": 0.07060284412748934,
+    "mean_net_return_pct": 0.05060284412748932,
+    "total_gross_pnl_pct": 1.482659726677276,
+    "total_net_pnl_pct": 1.0626597266772757,
+    "gross_win_rate": 0.7142857142857143,
+    "net_win_rate": 0.6190476190476191,
+    "direction_accuracy": 0.7142857142857143,
+    "sharpe_ratio": 51.53117923779647,
+    "std_dev_pct": 0.21768195145786562
+  },
+  "outcomes": {
+    "gross_correct_direction": 15,
+    "gross_wrong_direction": 6,
+    "net_profitable": 13,
+    "net_unprofitable": 8
+  }
+}

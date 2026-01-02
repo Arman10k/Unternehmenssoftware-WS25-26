@@ -1,0 +1,25 @@
+{
+  "split": "val",
+  "config": {
+    "tau": 0.05,
+    "transaction_cost_bps": 2,
+    "stage1_threshold": 0.65
+  },
+  "events": {
+    "total": 261,
+    "stage1_filtered": 54,
+    "long_trades": 8,
+    "short_trades": 29,
+    "total_trades": 37
+  },
+  "performance": {
+    "mean_gross_pnl": -0.06926153253596587,
+    "mean_net_pnl": -0.08926153253596583,
+    "total_gross_pnl": -2.562676703830737,
+    "total_net_pnl": -3.302676703830736,
+    "gross_win_rate": 0.4594594594594595,
+    "net_win_rate": 0.4594594594594595,
+    "sharpe": -20.186162580757337,
+    "std_dev": 0.9802303573080035
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "q": 0.35,
+  "abs_threshold": 0.16672892104014617,
+  "stage1": {
+    "threshold": 0.65,
+    "train_tradeable_pct": 0.35,
+    "val_tradeable_pct": 0.4061302681992337,
+    "test_tradeable_pct": 0.22137404580152673
+  },
+  "stage2": {
+    "val_mae": 0.4074109662393482,
+    "val_rmse": 0.5271705617673536,
+    "val_r2": -0.003915749550385206,
+    "optimal_threshold": 0.08857142857142856,
+    "val_trades": 35,
+    "val_mean_net": 0.13619391990080407,
+    "val_median_net": 0.2035573628786649,
+    "val_sharpe": 3.251293428723085,
+    "val_win_rate": 0.6
+  }
+}
