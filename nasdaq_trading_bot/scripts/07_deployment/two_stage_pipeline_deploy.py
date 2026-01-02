@@ -31,7 +31,7 @@ import yfinance as yf
 import torch
 from torch import nn
 
-# Paths
+# Paths (must be defined before NewsFeatureProvider import)
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(THIS_DIR, "..", ".."))
 sys.path.insert(0, PROJECT_ROOT)
@@ -40,6 +40,23 @@ CONF_DIR = os.path.join(PROJECT_ROOT, "conf")
 MODEL_DIR = os.path.join(PROJECT_ROOT, "models", "two_stage_pipeline")
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 SCALER_X_PATH = os.path.join(DATA_DIR, "event_scaler_X.joblib")
+
+# News sentiment provider
+try:
+    news_features_path = os.path.join(THIS_DIR, "news_features.py")
+    if os.path.exists(news_features_path):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("news_features", news_features_path)
+        news_features = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(news_features)
+        NEWS_PROVIDER = news_features.NewsFeatureProvider()
+        print("[INFO] NewsFeatureProvider loaded successfully")
+    else:
+        NEWS_PROVIDER = None
+        print("[WARN] news_features.py not found")
+except Exception as e:
+    print(f"[WARN] Could not load NewsFeatureProvider: {e}")
+    NEWS_PROVIDER = None
 
 # Load configs
 with open(os.path.join(CONF_DIR, "params.yaml"), "r") as f:
@@ -249,11 +266,16 @@ def create_sentiment_features(sentiment: float) -> np.ndarray:
 
 
 def get_news_sentiment() -> float:
-    """Get news sentiment - placeholder for now"""
+    """Get real-time news sentiment"""
     try:
-        # Integrate your NewsFeatureProvider here
-        return 0.0
-    except:
+        if NEWS_PROVIDER is None:
+            return 0.0
+        
+        now = datetime.now(timezone.utc)
+        sentiment, _, _ = NEWS_PROVIDER.get_news_features(now, tickers=["QQQ"])
+        return sentiment
+    except Exception as e:
+        print(f"[WARN] Sentiment error: {e}")
         return 0.0
 
 
